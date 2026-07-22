@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Yotpo scroll issue reproduction</title>
+    <script
+      type="text/javascript"
+      src="https://cdn-widgetsrepository.yotpo.com/v1/loader/Vzm3LBkxXpOcEpOiSHCPW0Hjf5VSLnkUZEKpAzWH?languageCode=en"
+      async=""
+    ></script>
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">Site Header</div>
+    </div>
+    <div class="card">
+      <div
+        class="yotpo-widget-instance"
+        data-yotpo-instance-id="410366"
+        data-yotpo-product-id="9318207652151"
+      ></div>
+    </div>
+    <div class="card empty"><span class="marker">spacer 1</span></div>
+    <div class="card empty"><span class="marker">spacer 2</span></div>
+    <div class="card empty"><span class="marker">spacer 3</span></div>
+    <div class="card">
+      <div
+        class="yotpo-widget-instance"
+        data-yotpo-instance-id="407402"
+        data-yotpo-product-id="9318207652151"
+      ></div>
+    </div>
+    <div id="target_1" class="card empty">
+      <span class="marker">spacer 4</span>
+    </div>
+    <div class="card empty"><span class="marker">spacer 5</span></div>
+    <div class="card empty"><span class="marker">spacer 6</span></div>
+
+    <style>
+      #scroll-hud {
+        position: fixed;
+        top: 8px;
+        right: 8px;
+        z-index: 9999;
+        background: #111;
+        color: #0f0;
+        font: 12px/1.4 monospace;
+        padding: 6px 10px;
+        border-radius: 4px;
+        pointer-events: none;
+      }
+      .card {
+        background-color: #f0f0f0;
+        padding: 20px;
+        margin-bottom: 12px;
+        border-radius: 10px;
+        box-shadow: 0 0 10px 0 rgba(0, 0, 0, 0.1);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+      }
+      .label {
+        font-size: 16px;
+        font-weight: bold;
+        color: #333;
+        text-align: center;
+      }
+      .empty {
+        height: 250px;
+      }
+      .marker {
+        font-size: 13px;
+        color: #888;
+      }
+    </style>
+    <script>
+      (function interceptScrollToTop() {
+        // 1. Intercept window.scrollTo / window.scroll
+        const originalScrollTo = window.scrollTo;
+        window.scrollTo = function (...args) {
+          const top = typeof args[0] === "object" ? args[0].top : args[1];
+          if (top === 0 || top === undefined) {
+            console.warn("🚨 [Scroll Intercept] window.scrollTo(0) triggered!");
+            console.trace(); // Prints the entire function call stack
+            // debugger; // Uncomment to freeze execution in DevTools
+          }
+          return originalScrollTo.apply(this, args);
+        };
+
+        // 2. Intercept Element.prototype.scrollIntoView
+        const originalScrollIntoView = Element.prototype.scrollIntoView;
+        Element.prototype.scrollIntoView = function (...args) {
+          console.warn("🚨 [Scroll Intercept] scrollIntoView called on:", this);
+          console.trace();
+          return originalScrollIntoView.apply(this, args);
+        };
+
+        // 3. Intercept document.documentElement.scrollTop / document.body.scrollTop
+        ["documentElement", "body"].forEach((elName) => {
+          const element = document[elName];
+          if (!element) return;
+          let originalScrollTop = element.scrollTop;
+
+          Object.defineProperty(element, "scrollTop", {
+            get() {
+              return originalScrollTop;
+            },
+            set(val) {
+              if (val === 0 && window.scrollY > 50) {
+                console.warn(
+                  `🚨 [Scroll Intercept] ${elName}.scrollTop set to 0!`,
+                );
+                console.trace();
+              }
+              originalScrollTop = val;
+            },
+          });
+        });
+      })();
+
+      (function () {
+        const target = document.getElementById("target_1");
+        if (!target) {
+          console.error("[repro] #target_1 not found");
+          return;
+        }
+
+        let initWidgetsTriggered = false;
+        let waitingForContainer = false;
+
+        function callInitWidgets() {
+          if (initWidgetsTriggered) return true;
+          if (typeof yotpoWidgetsContainer?.initWidgets !== "function") {
+            return false;
+          }
+          initWidgetsTriggered = true;
+          console.log(
+            "[repro] calling yotpoWidgetsContainer.initWidgets() at scrollY=",
+            window.scrollY,
+          );
+          yotpoWidgetsContainer.initWidgets();
+          return true;
+        }
+
+        function waitForInitWidgets() {
+          if (waitingForContainer || initWidgetsTriggered) return;
+          waitingForContainer = true;
+          const poll = setInterval(function () {
+            if (callInitWidgets()) {
+              clearInterval(poll);
+              observer.disconnect();
+            }
+          }, 100);
+        }
+
+        const observer = new IntersectionObserver(
+          function (entries) {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue;
+              if (callInitWidgets()) {
+                observer.disconnect();
+                return;
+              }
+              waitForInitWidgets();
+            }
+          },
+          {
+            root: null,
+            rootMargin: "0px",
+            threshold: 0,
+          },
+        );
+
+        observer.observe(target);
+      })();
+    </script>
+  </body>
+</html>
